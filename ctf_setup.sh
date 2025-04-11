@@ -1,169 +1,240 @@
 #!/bin/bash
 
+# Check if script is run as root
+if [ "$EUID" -ne 0 ]; then
+  echo "This script must be run as root"
+  exit 1
+fi
+
+echo "Setting up CTF environment directly on the system..."
+
 # Create a directory for our CTF setup
-mkdir -p ctf_setup
-cd ctf_setup
-
-# Create Dockerfile
-cat >Dockerfile <<'EOF'
-FROM ubuntu:22.04
-
-# Avoid prompts during package installation
-ENV DEBIAN_FRONTEND=noninteractive
+mkdir -p /opt/ctf_setup
+cd /opt/ctf_setup
 
 # Install necessary packages
-RUN apt-get update && apt-get install -y \
-    openssh-server \
-    vim \
-    nano \
-    python3 \
-    gcc \
-    make \
-    git \
-    netcat-openbsd \
-    nmap \
-    sudo \
-    cron \
-    php \
-    apache2 \
-    rsyslog \
-    iproute2 \
-    iputils-ping \
-    curl \
-    ufw \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+echo "Installing required packages..."
+apt-get update && apt-get install -y \
+  openssh-server \
+  vim \
+  nano \
+  python3 \
+  gcc \
+  make \
+  git \
+  netcat-openbsd \
+  nmap \
+  sudo \
+  cron \
+  php \
+  apache2 \
+  rsyslog \
+  iproute2 \
+  iputils-ping \
+  curl \
+  ufw
 
 # Configure SSH
-RUN mkdir /var/run/sshd
-RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-RUN sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
+echo "Configuring SSH..."
+mkdir -p /var/run/sshd
+sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
 
-# Create bandit users (0-8) - Make sure to create bandit8 as well
-RUN for i in $(seq 0 8); do \
-    useradd -m -d /home/bandit$i -s /bin/bash bandit$i; \
-    echo "bandit$i:bandit$i" | chpasswd; \
-    done
+# Define passwords for each level
+PASSWORD_0="bandit0"
+PASSWORD_1="thisshit"
+PASSWORD_2="thisshitt"
+PASSWORD_3="thisshittt"
+PASSWORD_4="thisshitttt"
+PASSWORD_5="thisshittttt"
+PASSWORD_6="thisshitttttt"
+PASSWORD_7="thisshittttttt"
+PASSWORD_8="final_password_congrats"
+
+# Create bandit users (0-8) with custom passwords
+echo "Creating users with custom passwords..."
+# bandit0 has default password
+useradd -m -d /home/bandit0 -s /bin/bash bandit0
+echo "bandit0:$PASSWORD_0" | chpasswd
+
+# bandit1 through bandit8 have progressive passwords
+for i in $(seq 1 8); do
+  useradd -m -d /home/bandit$i -s /bin/bash bandit$i
+  eval "echo \"bandit$i:\$PASSWORD_$i\"" | chpasswd
+done
 
 # Set proper permissions for home directories
-RUN chmod 700 /home/bandit*
+chmod 700 /home/bandit*
 
 # Level 0 (Demo)
-RUN echo "Welcome to the CTF Challenge!\n\nYour goal is to find the password for the next level.\nFor this demo level, the password for level 1 is: thisshit\n\nTo access the next level, use:\nssh bandit1@localhost -p 2222\n" > /home/bandit0/README.txt
-RUN chown bandit0:bandit0 /home/bandit0/README.txt
+echo "Setting up Level 0 (Demo)..."
+echo "Welcome to the CTF Challenge!\n\nYour goal is to find the password for the next level.\nFor this demo level, the password for level 1 is: $PASSWORD_1\n\nTo access the next level, use:\nssh bandit1@localhost -p 2222\n" >/home/bandit0/README.txt
+chown bandit0:bandit0 /home/bandit0/README.txt
 
 # Level 1: Hidden Files
-RUN echo "thisshitt" > /home/bandit1/.hidden_password
-RUN chmod 400 /home/bandit1/.hidden_password
-RUN chown bandit1:bandit1 /home/bandit1/.hidden_password
-RUN echo "Find the hidden file in this directory" > /home/bandit1/README.txt
-RUN chown bandit1:bandit1 /home/bandit1/README.txt
+echo "Setting up Level 1: Hidden Files..."
+echo "$PASSWORD_2" >/home/bandit1/.hidden_password
+chmod 400 /home/bandit1/.hidden_password
+chown bandit1:bandit1 /home/bandit1/.hidden_password
+echo "Find the hidden file in this directory" >/home/bandit1/README.txt
+chown bandit1:bandit1 /home/bandit1/README.txt
 
 # Level 2: File Permissions and SUID
-RUN echo "thisshittt" > /home/bandit2/password
-RUN chmod 600 /home/bandit2/password
-RUN chown bandit3:bandit3 /home/bandit2/password
-RUN echo "You need to access a file owned by bandit3. Look for special permissions." > /home/bandit2/README.txt
-RUN chown bandit2:bandit2 /home/bandit2/README.txt
+echo "Setting up Level 2: File Permissions and SUID..."
+echo "$PASSWORD_3" >/home/bandit2/password
+chmod 600 /home/bandit2/password
+chown bandit3:bandit3 /home/bandit2/password
+echo "You need to access a file owned by bandit3. Look for special permissions." >/home/bandit2/README.txt
+chown bandit2:bandit2 /home/bandit2/README.txt
 
 # Creating SUID binary for level 2
-RUN echo '#include <stdio.h>\n#include <stdlib.h>\n#include <unistd.h>\n\nint main() {\n    setuid(geteuid());\n    system("cat /home/bandit2/password");\n    return 0;\n}' > /home/bandit2/read_password.c
-RUN gcc -o /home/bandit2/read_password /home/bandit2/read_password.c
-RUN chmod 4755 /home/bandit2/read_password
-RUN chown bandit3:bandit2 /home/bandit2/read_password
+echo '#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main() {
+    setuid(geteuid());
+    system("cat /home/bandit2/password");
+    return 0;
+}' >/home/bandit2/read_password.c
+gcc -o /home/bandit2/read_password /home/bandit2/read_password.c
+chmod 4755 /home/bandit2/read_password
+chown bandit3:bandit2 /home/bandit2/read_password
 
 # Level 3: Scheduled Tasks
-RUN echo "* * * * * echo 'thisshitttt' > /tmp/password_drop && chmod 644 /tmp/password_drop && sleep 30 && rm /tmp/password_drop" > /etc/cron.d/bandit3_task
-RUN chmod 644 /etc/cron.d/bandit3_task
-RUN echo "The password appears and disappears somewhere in the system. Can you catch it?" > /home/bandit3/README.txt
-RUN chown bandit3:bandit3 /home/bandit3/README.txt
+echo "Setting up Level 3: Scheduled Tasks..."
+echo "* * * * * echo '$PASSWORD_4' > /tmp/password_drop && chmod 644 /tmp/password_drop && sleep 30 && rm /tmp/password_drop" >/etc/cron.d/bandit3_task
+chmod 644 /etc/cron.d/bandit3_task
+echo "The password appears and disappears somewhere in the system. Can you catch it?" >/home/bandit3/README.txt
+chown bandit3:bandit3 /home/bandit3/README.txt
 
 # Level 4: Network Services
-RUN echo '#!/usr/bin/python3\nimport socket\n\ns = socket.socket()\ns.bind((\"0.0.0.0\", 54321))\ns.listen(5)\n\nwhile True:\n    c, addr = s.accept()\n    c.send(b\"Welcome to level 4!\\nPassword for level5: thisshittttt\\n\")\n    c.close()' > /home/bandit4/service.py
-RUN chmod +x /home/bandit4/service.py
-RUN chown bandit4:bandit4 /home/bandit4/service.py
+echo "Setting up Level 4: Network Services..."
+echo "#!/usr/bin/python3
+import socket
 
-RUN echo "There's a service running somewhere on this machine. Can you find it?" > /home/bandit4/README.txt
-RUN chown bandit4:bandit4 /home/bandit4/README.txt
+s = socket.socket()
+s.bind((\"0.0.0.0\", 54321))
+s.listen(5)
+
+while True:
+    c, addr = s.accept()
+    c.send(b\"Welcome to level 4!\\nPassword for level5: $PASSWORD_5\\n\")
+    c.close()" >/home/bandit4/service.py
+chmod +x /home/bandit4/service.py
+chown bandit4:bandit4 /home/bandit4/service.py
+
+echo "There's a service running somewhere on this machine. Can you find it?" >/home/bandit4/README.txt
+chown bandit4:bandit4 /home/bandit4/README.txt
 
 # Service startup script
-RUN echo '#!/bin/bash\nsu - bandit4 -c "python3 /home/bandit4/service.py &"' > /usr/local/bin/start_level4.sh
-RUN chmod +x /usr/local/bin/start_level4.sh
+echo '#!/bin/bash
+su - bandit4 -c "python3 /home/bandit4/service.py &"' >/usr/local/bin/start_level4.sh
+chmod +x /usr/local/bin/start_level4.sh
 
 # Level 5: Binary Analysis
-RUN echo '#include <stdio.h>\n#include <string.h>\n\nint main() {\n    char input[100];\n    printf("Enter secret code: ");\n    scanf("%s", input);\n    \n    if (strcmp(input, "7h15_15_53cr37") == 0) {\n        printf("Password for next level: thisshitttttt\\n");\n    } else {\n        printf("Incorrect!\\n");\n    }\n    return 0;\n}' > /home/bandit5/password_checker.c
-RUN gcc -o /home/bandit5/checker /home/bandit5/password_checker.c
-RUN chmod 4755 /home/bandit5/checker
-RUN chown bandit6:bandit5 /home/bandit5/checker
-RUN echo "There's a binary here that might help you get to the next level." > /home/bandit5/README.txt
-RUN chown bandit5:bandit5 /home/bandit5/README.txt
+echo "Setting up Level 5: Binary Analysis..."
+echo "#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char input[100];
+    printf(\"Enter secret code: \");
+    scanf(\"%s\", input);
+    
+    if (strcmp(input, \"7h15_15_53cr37\") == 0) {
+        printf(\"Password for next level: $PASSWORD_6\\n\");
+    } else {
+        printf(\"Incorrect!\\n\");
+    }
+    return 0;
+}" >/home/bandit5/password_checker.c
+gcc -o /home/bandit5/checker /home/bandit5/password_checker.c
+chmod 4755 /home/bandit5/checker
+chown bandit6:bandit5 /home/bandit5/checker
+echo "There's a binary here that might help you get to the next level." >/home/bandit5/README.txt
+chown bandit5:bandit5 /home/bandit5/README.txt
 
 # Level 6: Web Exploitation
-RUN mkdir -p /var/www/html/secret
-RUN echo "thisshittttttt" > /var/www/html/secret/passwd.txt
-RUN chmod 644 /var/www/html/secret/passwd.txt
-RUN echo '<?php\nif (isset($_GET["file"])) {\n    include($_GET["file"]);\n} else {\n    echo "Hint: This page accepts a \"file\" parameter.";\n}\n// The password is in /var/www/html/secret/passwd.txt\n?>' > /var/www/html/level6.php
-RUN chown -R www-data:www-data /var/www/html/
-RUN echo "There's a website running locally. Try accessing http://localhost/level6.php" > /home/bandit6/README.txt
-RUN chown bandit6:bandit6 /home/bandit6/README.txt
+echo "Setting up Level 6: Web Exploitation..."
+mkdir -p /var/www/html/secret
+echo "$PASSWORD_7" >/var/www/html/secret/passwd.txt
+chmod 644 /var/www/html/secret/passwd.txt
+echo '<?php
+if (isset($_GET["file"])) {
+    include($_GET["file"]);
+} else {
+    echo "Hint: This page accepts a \"file\" parameter.";
+}
+// The password is in /var/www/html/secret/passwd.txt
+?>' >/var/www/html/level6.php
+chown -R www-data:www-data /var/www/html/
+echo "There's a website running locally. Try accessing http://localhost/level6.php" >/home/bandit6/README.txt
+chown bandit6:bandit6 /home/bandit6/README.txt
 
 # Level 7: Privilege Escalation
-RUN echo "bandit7 ALL=(bandit8) NOPASSWD: /usr/bin/cat /home/bandit7/not_here/*" >> /etc/sudoers
-RUN mkdir -p /home/bandit7/not_here
-RUN echo "final_password_congrats" > /home/bandit8/.password
-RUN chmod 600 /home/bandit8/.password
-RUN chown bandit8:bandit8 /home/bandit8/.password
-RUN echo "Can you leverage sudo privileges to get the final password?" > /home/bandit7/README.txt
-RUN chown bandit7:bandit7 /home/bandit7/README.txt
+echo "Setting up Level 7: Privilege Escalation..."
+echo "bandit7 ALL=(bandit8) NOPASSWD: /usr/bin/cat /home/bandit7/not_here/*" >>/etc/sudoers
+mkdir -p /home/bandit7/not_here
+echo "$PASSWORD_8" >/home/bandit8/.password
+chmod 600 /home/bandit8/.password
+chown bandit8:bandit8 /home/bandit8/.password
+echo "Can you leverage sudo privileges to get the final password?" >/home/bandit7/README.txt
+chown bandit7:bandit7 /home/bandit7/README.txt
 
-# Startup script
-RUN echo '#!/bin/bash\n\n# Start SSH server\n/usr/sbin/sshd\n\n# Start Apache\napache2ctl start\n\n# Start cron service\nservice cron start\n\n# Start level 4 service\n/usr/local/bin/start_level4.sh\n\n# Keep container running\ntail -f /dev/null' > /usr/local/bin/startup.sh
-RUN chmod +x /usr/local/bin/startup.sh
+# Configure services
+echo "Configuring and starting services..."
 
-EXPOSE 2222 80
+# Update SSH configuration to listen on port 2222
+if ! grep -q "Port 2222" /etc/ssh/sshd_config; then
+  echo "Port 2222" >>/etc/ssh/sshd_config
+fi
 
-CMD ["/usr/local/bin/startup.sh"]
-EOF
+# Make sure SSH service is running
+systemctl restart ssh
 
-# Create docker-compose.yml
-cat >docker-compose.yml <<'EOF'
-version: '3'
+# Make sure Apache is running
+systemctl enable apache2
+systemctl restart apache2
 
-services:
-  ctf:
-    build: .
-    ports:
-      - "2222:2222"
-      - "8080:80"
-    restart: always
-EOF
+# Make sure cron is running
+systemctl enable cron
+systemctl restart cron
 
-# Create run script
-cat >run_ctf.sh <<'EOF'
-#!/bin/bash
+# Start level 4 service
+/usr/local/bin/start_level4.sh
 
-echo "Building and starting CTF Docker container..."
-docker-compose up -d
+# Create a systemd service to ensure level4 service starts on boot
+echo "[Unit]
+Description=CTF Level 4 Service
+After=network.target
 
-echo -e "\nCTF server is now running!"
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/start_level4.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target" >/etc/systemd/system/ctf-level4.service
+
+systemctl enable ctf-level4.service
+systemctl start ctf-level4.service
+
+echo -e "\nCTF setup is complete!"
 echo -e "\nConnect to the first level with:"
 echo "ssh bandit0@localhost -p 2222"
 echo "Password: bandit0"
 
 echo -e "\nCTF Levels:"
-echo "Level 0: Demo level"
-echo "Level 1: Hidden Files"
-echo "Level 2: File Permissions and SUID"
-echo "Level 3: Scheduled Tasks"
-echo "Level 4: Network Services"
-echo "Level 5: Binary Analysis"
-echo "Level 6: Web Exploitation"
-echo "Level 7: Privilege Escalation"
+echo "Level 0: Demo level (Password: bandit0)"
+echo "Level 1: Hidden Files (Password: thisshit)"
+echo "Level 2: File Permissions and SUID (Password: thisshitt)"
+echo "Level 3: Scheduled Tasks (Password: thisshittt)"
+echo "Level 4: Network Services (Password: thisshitttt)"
+echo "Level 5: Binary Analysis (Password: thisshittttt)"
+echo "Level 6: Web Exploitation (Password: thisshitttttt)"
+echo "Level 7: Privilege Escalation (Password: thisshittttttt)"
+echo "Level 8: Final level (Password: final_password_congrats)"
 
-echo -e "\nTo stop the CTF server:"
-echo "docker-compose down"
-EOF
-
-chmod +x run_ctf.sh
-
-echo "Setup complete! Run ./run_ctf.sh to start the CTF server."
+echo -e "\nNote: All services are configured to start automatically on system boot."
+echo -e "Warning: This script makes significant changes to your system. It should only be run on a dedicated CTF server."
