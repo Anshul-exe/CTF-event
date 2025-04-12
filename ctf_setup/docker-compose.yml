@@ -1,0 +1,16 @@
+version: '3'
+services:
+  ctf:
+    build: .
+    ports:
+      - "2222:2222"
+      - "8081:80"  # Changed from 8080 to 8081
+    volumes:
+      - ctf-logs:/var/log
+    cap_add:
+      - SYS_ADMIN
+    restart: unless-stopped
+    command: ["/usr/local/bin/startup.sh"]
+
+volumes:
+  ctf-logs:
